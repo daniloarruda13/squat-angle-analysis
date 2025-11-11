@@ -26,7 +26,7 @@ This will generate plots comparing joint angles and display stick figure animati
 ## 📊 Sample Outputs
 
 ### Animation of the movement
-![Squat Animation](squat_animation.gif)
+![Squat Animation](https://github.com/daniloarruda13/squat-angle-analysis/blob/main/animation_squat.gif?raw=true)
 
 ### Hip Angle Comparison
 ![Hip Angles](hip_angle.jpg)
