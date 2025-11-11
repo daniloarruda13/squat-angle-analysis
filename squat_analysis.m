@@ -1,0 +1,355 @@
+% Requires helper functions on path:
+%   filterdata, StickFigure1, unitvec, TwoDangleNew
+% Written for MATLAB R2023
+
+clearvars;
+close all;
+
+%% Settings
+doAnimation = true;
+sf = 200;                    % sampling frequency (Hz)
+duration_s = 10;             % seconds for each "first/last" window
+nSamples = sf * duration_s;  % number of samples in the 10s segments
+baseDir = fileparts(mfilename('fullpath'));
+%% Read data safely
+try
+    reg_squat_data = readmatrix(fullfile(baseDir,'reg_squat.csv'));
+    dep_squat_data = readmatrix(fullfile(baseDir,'dep_squat.csv'));
+catch ME
+    error('Could not read input files. Check baseDir and filenames. Original error: %s', ME.message);
+end
+
+% Basic sanity checks
+if size(reg_squat_data,2) < 65 || size(dep_squat_data,2) < 65
+    warning('Input files have fewer columns than expected. Script may index out of range.');
+end
+
+%% Extract relevant columns (angles and marker data)
+% These indices are from your original script; keep them but check bounds.
+% Adjust start rows if necessary for your dataset
+reg_squat = reg_squat_data(16722:end, 3:50);
+dep_squat = dep_squat_data(17358:end, 3:50);
+
+% Apply filtering (assuming filterdata signature: (data, originalSf, ~, cutoff, ~, ~))
+reg_squat = filterdata(reg_squat, sf, 0, 15, 2, 0);
+dep_squat = filterdata(dep_squat, sf, 0, 15, 2, 0);
+
+% Angle matrices
+reg_squat_ang = safe_segment(reg_squat_data, 8363, 16716);
+dep_squat_ang = safe_segment(dep_squat_data, 8681, 16713);
+
+% First and last 10s segments (safe extraction)
+reg_ang_start = safe_take_window(reg_squat_ang, 1, nSamples);
+reg_ang_end   = safe_take_window(reg_squat_ang, size(reg_squat_ang,1)-nSamples+1, nSamples);
+dep_ang_start = safe_take_window(dep_squat_ang, 1, nSamples);
+dep_ang_end   = safe_take_window(dep_squat_ang, size(dep_squat_ang,1)-nSamples+1, nSamples);
+
+% Build 3D arrays [time x 3channels x start/end]
+% Index locations for ankle/knee/hip/pelvis taken from original script:
+% NOTE: verify these column indices match your file layout
+try
+    dep_ang_ankle(:,:,1)   = dep_ang_start(:, 6:8);
+    dep_ang_ankle(:,:,2)   = dep_ang_end(:,   6:8);
+    dep_ang_knee(:,:,1)    = dep_ang_start(:,51:53);
+    dep_ang_knee(:,:,2)    = dep_ang_end(:, 51:53);
+    dep_ang_hip(:,:,1)     = dep_ang_start(:,39:41);
+    dep_ang_hip(:,:,2)     = dep_ang_end(:, 39:41);
+    dep_ang_pelvis(:,:,1)  = dep_ang_start(:,63:65);
+    dep_ang_pelvis(:,:,2)  = dep_ang_end(:, 63:65);
+
+    reg_ang_ankle(:,:,1)   = reg_ang_start(:, 6:8);
+    reg_ang_ankle(:,:,2)   = reg_ang_end(:,   6:8);
+    reg_ang_knee(:,:,1)    = reg_ang_start(:,51:53);
+    reg_ang_knee(:,:,2)    = reg_ang_end(:, 51:53);
+    reg_ang_hip(:,:,1)     = reg_ang_start(:,39:41);
+    reg_ang_hip(:,:,2)     = reg_ang_end(:, 39:41);
+    reg_ang_pelvis(:,:,1)  = reg_ang_start(:,63:65);
+    reg_ang_pelvis(:,:,2)  = reg_ang_end(:, 63:65);
+catch
+    warning('One of the angle index ranges is out of bounds. Check input files and column indices.');
+end
+
+%% Time vector (0..duration_s) with sf*nSamples points
+time = (0:nSamples-1) / sf;  % column length nSamples
+
+%% Quick numeric checks / example prints
+fprintf('Number of samples per segment: %d\n', nSamples);
+if exist('reg_ang_ankle','var')
+    fprintf('Reg ankle start size: %s\n', mat2str(size(reg_ang_ankle)));
+end
+
+%% Plotting parameters
+jointNames = {'Ankle','Knee','Hip','Pelvis'};
+yLimitsAll = [-60 180; -100 180; -100 180; -100 180]; % [min max] per joint
+colors = lines(3);  % three channels (flex/ext, rotation, ab/ad) default colormap
+
+%% Helper: Plot grids for each joint to reduce repetition
+
+figure(1)
+plot_joint_grid(time, reg_ang_ankle, dep_ang_ankle, 'Ankle Flexion/Extension Angle', yLimitsAll(1,:), colors);
+figure(2)
+plot_joint_grid(time, reg_ang_knee,  dep_ang_knee,  'Knee Angles',              yLimitsAll(2,:), colors);
+figure(3)
+plot_joint_grid(time, reg_ang_hip,   dep_ang_hip,   'Hip Angles',               yLimitsAll(3,:), colors);
+figure(4)
+plot_joint_grid(time, reg_ang_pelvis,dep_ang_pelvis,'Pelvis Angles',            yLimitsAll(4,:), colors);
+
+
+
+%% Marker-based stick figures (first and last 10s)
+% Extract marker positions from reg_squat and dep_squat (columns 1:48 -> 16 markers x 3)
+% Names mapping preserved from original script. Use safe_extract to prevent indexing errors.
+
+% Regular squat markers
+Reg = struct();
+Reg.LASIS = safe_extract(reg_squat, 1, 3);
+Reg.RASIS = safe_extract(reg_squat, 4, 3);
+Reg.LPSIS = safe_extract(reg_squat, 7, 3);
+Reg.RPSIS = safe_extract(reg_squat,10, 3);
+Reg.LTHI  = safe_extract(reg_squat,13, 3);
+Reg.LKNEE = safe_extract(reg_squat,16, 3);
+Reg.LTIB  = safe_extract(reg_squat,19, 3);
+Reg.LANK  = safe_extract(reg_squat,22, 3);
+Reg.LHEEL = safe_extract(reg_squat,25, 3);
+Reg.LTOE  = safe_extract(reg_squat,28, 3);
+Reg.RTHI  = safe_extract(reg_squat,31, 3);
+Reg.RKNEE = safe_extract(reg_squat,34, 3);
+Reg.RTIB  = safe_extract(reg_squat,37, 3);
+Reg.RANK  = safe_extract(reg_squat,40, 3);
+Reg.RHEEL = safe_extract(reg_squat,43, 3);
+Reg.RTOE  = safe_extract(reg_squat,46, 3);
+
+% Deep squat markers
+Dep = struct();
+Dep.LASIS = safe_extract(dep_squat, 1, 3);
+Dep.RASIS = safe_extract(dep_squat, 4, 3);
+Dep.LPSIS = safe_extract(dep_squat, 7, 3);
+Dep.RPSIS = safe_extract(dep_squat,10, 3);
+Dep.LTHI  = safe_extract(dep_squat,13, 3);
+Dep.LKNEE = safe_extract(dep_squat,16, 3);
+Dep.LTIB  = safe_extract(dep_squat,19, 3);
+Dep.LANK  = safe_extract(dep_squat,22, 3);
+Dep.LHEEL = safe_extract(dep_squat,25, 3);
+Dep.LTOE  = safe_extract(dep_squat,28, 3);
+Dep.RTHI  = safe_extract(dep_squat,31, 3);
+Dep.RKNEE = safe_extract(dep_squat,34, 3);
+Dep.RTIB  = safe_extract(dep_squat,37, 3);
+Dep.RANK  = safe_extract(dep_squat,40, 3);
+Dep.RHEEL = safe_extract(dep_squat,43, 3);
+Dep.RTOE  = safe_extract(dep_squat,46, 3);
+
+% Compute pelvis centers
+if isfield(Reg,'RASIS') && isfield(Reg,'RPSIS')
+    Reg.R_pelvis = (Reg.RASIS + Reg.RPSIS) / 2;
+    Reg.L_pelvis = (Reg.LASIS + Reg.LPSIS) / 2;
+end
+if isfield(Dep,'RASIS') && isfield(Dep,'RPSIS')
+    Dep.R_pelvis = (Dep.RASIS + Dep.RPSIS) / 2;
+    Dep.L_pelvis = (Dep.LASIS + Dep.LPSIS) / 2;
+end
+
+if doAnimation
+    % ----------------------------
+    % Define marker link pairs
+    % ----------------------------
+    linkPairs = [1,2; 2,4; 1,3; 3,4; 5,1; 5,3; 5,7; 2,9; 4,9; 9,11; 11,12; 7,8];
+
+
+    % ----------------------------
+    % Build marker matrices
+    % ----------------------------
+    try
+        dataRegFirst = [Reg.LASIS(1:nSamples,:), Reg.RASIS(1:nSamples,:), Reg.LPSIS(1:nSamples,:), Reg.RPSIS(1:nSamples,:), ...
+                        Reg.LKNEE(1:nSamples,:), Reg.LANK(1:nSamples,:), Reg.LHEEL(1:nSamples,:), Reg.LTOE(1:nSamples,:), ...
+                        Reg.RKNEE(1:nSamples,:), Reg.RANK(1:nSamples,:), Reg.RHEEL(1:nSamples,:), Reg.RTOE(1:nSamples,:)];
+
+        dataDepFirst = [Dep.LASIS(1:nSamples,:), Dep.RASIS(1:nSamples,:), Dep.LPSIS(1:nSamples,:), Dep.RPSIS(1:nSamples,:), ...
+                        Dep.LKNEE(1:nSamples,:), Dep.LANK(1:nSamples,:), Dep.LHEEL(1:nSamples,:), Dep.LTOE(1:nSamples,:), ...
+                        Dep.RKNEE(1:nSamples,:), Dep.RANK(1:nSamples,:), Dep.RHEEL(1:nSamples,:), Dep.RTOE(1:nSamples,:)];
+
+        lastIdxReg = size(Reg.LASIS,1);
+        dataRegLast = [Reg.LASIS(lastIdxReg-nSamples+1:lastIdxReg,:), Reg.RASIS(lastIdxReg-nSamples+1:lastIdxReg,:), ...
+                       Reg.LPSIS(lastIdxReg-nSamples+1:lastIdxReg,:), Reg.RPSIS(lastIdxReg-nSamples+1:lastIdxReg,:), ...
+                       Reg.LKNEE(lastIdxReg-nSamples+1:lastIdxReg,:), Reg.LANK(lastIdxReg-nSamples+1:lastIdxReg,:), ...
+                       Reg.LHEEL(lastIdxReg-nSamples+1:lastIdxReg,:), Reg.LTOE(lastIdxReg-nSamples+1:lastIdxReg,:), ...
+                       Reg.RKNEE(lastIdxReg-nSamples+1:lastIdxReg,:), Reg.RANK(lastIdxReg-nSamples+1:lastIdxReg,:), ...
+                       Reg.RHEEL(lastIdxReg-nSamples+1:lastIdxReg,:), Reg.RTOE(lastIdxReg-nSamples+1:lastIdxReg,:)];
+
+        lastIdxDep = size(Dep.LASIS,1);
+        dataDepLast = [Dep.LASIS(lastIdxDep-nSamples+1:lastIdxDep,:), Dep.RASIS(lastIdxDep-nSamples+1:lastIdxDep,:), ...
+                       Dep.LPSIS(lastIdxDep-nSamples+1:lastIdxDep,:), Dep.RPSIS(lastIdxDep-nSamples+1:lastIdxDep,:), ...
+                       Dep.LKNEE(lastIdxDep-nSamples+1:lastIdxDep,:), Dep.LANK(lastIdxDep-nSamples+1:lastIdxDep,:), ...
+                       Dep.LHEEL(lastIdxDep-nSamples+1:lastIdxDep,:), Dep.LTOE(lastIdxDep-nSamples+1:lastIdxDep,:), ...
+                       Dep.RKNEE(lastIdxDep-nSamples+1:lastIdxDep,:), Dep.RANK(lastIdxDep-nSamples+1:lastIdxDep,:), ...
+                       Dep.RHEEL(lastIdxDep-nSamples+1:lastIdxDep,:), Dep.RTOE(lastIdxDep-nSamples+1:lastIdxDep,:)];
+    catch ME
+        warning('Problem building datasets: %s', ME.message);
+        return;
+    end
+
+    % ----------------------------
+    % Shared animation settings
+    % ----------------------------
+    axLimits = [-400 300 1500 2200 0 1700];
+    vu = [3 10 2];
+    speed = 12;
+
+    % ----------------------------
+    % Figure 1 – First 10 s (Regular vs Deep)
+    % ----------------------------
+    fig1 = figure('Name','Squat Comparison – First 10 s');
+    t1 = tiledlayout(fig1,1,2,'TileSpacing','Compact','Padding','Compact');
+    ax1a = nexttile(t1); title(ax1a, 'Regular (First 10 s)');
+    ax1b = nexttile(t1); title(ax1b, 'Deep (First 10 s)');
+
+    % --- Regular first 10 s
+    StickFigure1(dataRegFirst, linkPairs, [], [], vu, axLimits, speed, ax1a);
+
+    % --- Deep first 10 s
+    StickFigure1(dataDepFirst, linkPairs, [], [], vu, axLimits, speed, ax1b);
+
+    % Optional: same scale, consistent view
+    axis(ax1a, axLimits);
+    axis(ax1b, axLimits);
+    view(ax1a, vu); view(ax1b, vu);
+
+    % ----------------------------
+    % Figure 2 – Last 10 s (Regular vs Deep)
+    % ----------------------------
+    fig2 = figure('Name','Squat Comparison – Last 10 s');
+    t2 = tiledlayout(fig2,1,2,'TileSpacing','Compact','Padding','Compact');
+    ax2a = nexttile(t2); title(ax2a, 'Regular (Last 10 s)');
+    ax2b = nexttile(t2); title(ax2b, 'Deep (Last 10 s)');
+
+    % --- Regular last 10 s
+    StickFigure1(dataRegLast, linkPairs, [], [], vu, axLimits, speed, ax2a);
+
+    % --- Deep last 10 s
+    StickFigure1(dataDepLast, linkPairs, [], [], vu, axLimits, speed, ax2b);
+
+    axis(ax2a, axLimits);
+    axis(ax2b, axLimits);
+    view(ax2a, vu); view(ax2b, vu);
+end
+
+    
+    %% Example: vectors and 2D knee angle computation (kept from original)
+    if exist('Reg','var') && exist('Dep','var')
+        try
+            R_R_THIGH = unitvec(Reg.R_pelvis - Reg.RKNEE);
+            R_R_SHANK = unitvec(Reg.RKNEE - Reg.RANK);
+            D_R_THIGH = unitvec(Dep.R_pelvis - Dep.RKNEE);
+            D_R_SHANK = unitvec(Dep.RKNEE - Dep.RANK);
+    
+            Reg_R_KNEE_ANG = TwoDangleNew(R_R_THIGH, R_R_SHANK);
+            Dep_R_KNEE_ANG = TwoDangleNew(D_R_THIGH, D_R_SHANK);
+            fprintf('Computed 2D knee angles (Reg & Dep) if helper functions available.\n');
+        catch
+            warning('Could not compute 2D knee angles - check unitvec/TwoDangleNew implementations and input sizes.');
+        end
+    end
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Local helper functions
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+function seg = safe_segment(mat, r1, r2)
+    % Return mat(r1:r2,:) if possible, otherwise return as much as available
+    if r1 < 1, r1 = 1; end
+    if r2 > size(mat,1), r2 = size(mat,1); end
+    if r1 > r2
+        seg = zeros(0, size(mat,2));
+    else
+        seg = mat(r1:r2, :);
+    end
+end
+
+function block = safe_take_window(mat, startRow, n)
+    % take n rows starting at startRow (clamps to valid range)
+    if isempty(mat)
+        block = zeros(0, size(mat,2));
+        return;
+    end
+    startRow = max(1, startRow);
+    endRow = min(size(mat,1), startRow + n - 1);
+    block = mat(startRow:endRow, :);
+    % if fewer rows than expected, pad with NaNs to keep consistent length
+    if size(block,1) < n
+        pad = nan(n - size(block,1), size(mat,2));
+        block = [block; pad];
+    end
+end
+
+function m = safe_extract(mat, startCol, nCols)
+    % Extract columns [startCol : startCol+nCols-1] from mat and return Nx3 matrix
+    if startCol < 1 || (startCol+nCols-1) > size(mat,2)
+        m = nan(size(mat,1), nCols);
+    else
+        m = mat(:, startCol:startCol+nCols-1);
+    end
+end
+
+function plot_joint_grid(time, reg_joint, dep_joint, figTitle, yLim, colors)
+    % Plot a 2x2 tiled grid for: reg start, reg end, dep start, dep end
+    % and show max/min values for each channel without cluttering lines
+    figure('Name', figTitle);
+    t = tiledlayout(2,2,'TileSpacing','Compact','Padding','Compact');
+    title(t, figTitle);
+
+    panels = {
+        struct('data', safe_slice(reg_joint,1), 'title','First 10s Parallel Squat');
+        struct('data', safe_slice(reg_joint,2), 'title','Last 10s Parallel Squat');
+        struct('data', safe_slice(dep_joint,1), 'title','First 10s Deep Squat');
+        struct('data', safe_slice(dep_joint,2), 'title','Last 10s Deep Squat');
+    };
+
+    for i = 1:4
+        ax = nexttile;
+        d = panels{i}.data;
+        hold(ax,'on');
+
+        if isempty(d)
+            text(0.5,0.5,'No data','HorizontalAlignment','center');
+            continue;
+        end
+
+        % Plot each component
+        for ch = 1:size(d,2)
+            p = plot(ax, time, d(:,ch), 'LineWidth', 1.8, 'Color', colors(ch,:));
+
+            % Compute min and max
+            ymin = min(d(:,ch), [], 'omitnan');
+            ymax = max(d(:,ch), [], 'omitnan');
+
+            % Add text labels slightly offset from curve end
+            xPos = time(end) - 0.1*(time(end)-time(1));
+            text(xPos, ymax, sprintf('↑%.1f°', ymax), 'Color', colors(ch,:), ...
+                'FontWeight','bold','FontSize',9, 'VerticalAlignment','bottom');
+            text(xPos, ymin, sprintf('↓%.1f°', ymin), 'Color', colors(ch,:), ...
+                'FontWeight','bold','FontSize',9, 'VerticalAlignment','top');
+        end
+
+        ylim(ax, yLim);
+        xlabel(ax, 'Time (s)');
+        ylabel(ax, 'Angle (°)');
+        title(ax, panels{i}.title);
+        box(ax,'on'); grid(ax,'on');
+        hold(ax,'off');
+
+        if i==4
+            legend(ax, {'Flex/Ext','Rotation','Ab/Ad'}, ...
+                   'Orientation','Horizontal','Location','southoutside');
+        end
+    end
+end
+
+
+function out = safe_slice(arr, which)
+    % arr: [n x 3 x 2], which: 1=start, 2=end
+    if isempty(arr) || ndims(arr) < 3 || size(arr,3) < which
+        out = [];
+    else
+        out = arr(:, :, which);
+    end
+end
