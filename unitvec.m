@@ -1,7 +1,14 @@
-function [y] = unitvec(x)
-%Creats a unit vector by dividing the vector by its magnitude.
-[n d]=size(x);
-for f=1:n;
-  mag = (sqrt(sum(x(f,1:3).^2)));
-  y(f,1:3)=x(f,1:3)./mag;
+function y = unitvec(x)
+%UNITVEC Normalize each three-dimensional row vector.
+%   Y = UNITVEC(X) returns an N-by-3 matrix whose rows have unit magnitude.
+
+    validateattributes(x, {'numeric'}, ...
+        {'2d', 'ncols', 3, 'real', 'finite'}, mfilename, 'x');
+
+    x = double(x);
+    magnitudes = vecnorm(x, 2, 2);
+    if any(magnitudes == 0)
+        error('unitvec:ZeroVector', 'Cannot normalize a zero-length vector.');
+    end
+    y = x ./ magnitudes;
 end

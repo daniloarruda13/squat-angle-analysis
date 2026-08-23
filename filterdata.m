@@ -1,56 +1,69 @@
-function [data_filt] = filterdata(data_raw,sf,hpcutoff,lpcutoff,order,show)
-  %This function bandpass filters discrete data in data_raw sampled at 
-  %sf Hz. Set hpcutoff = 0 for a lowpass filter.
-  %http://biomch-l.isbweb.org/archive/index.php/t-26625.html
+function dataFiltered = filterdata(dataRaw, sampleRate, highpassCutoff, lowpassCutoff, order, showPlots)
+%FILTERDATA Apply a corrected zero-lag Butterworth filter by column.
+%   Leading and trailing zeros are retained. FILTERDATA requires the Signal
+%   Processing Toolbox functions BUTTER and FILTFILT.
 
-  hpcutoff = hpcutoff/(sqrt(2)-1)^(0.5/order);
-  lpcutoff = lpcutoff/(sqrt(2)-1)^(0.5/order);
+    validateattributes(dataRaw, {'single', 'double'}, ...
+        {'2d', 'real', 'finite'}, mfilename, 'dataRaw');
+    validateattributes(sampleRate, {'numeric'}, ...
+        {'scalar', 'real', 'finite', 'positive'}, mfilename, 'sampleRate');
+    validateattributes(highpassCutoff, {'numeric'}, ...
+        {'scalar', 'real', 'finite', 'nonnegative'}, mfilename, 'highpassCutoff');
+    validateattributes(lowpassCutoff, {'numeric'}, ...
+        {'scalar', 'real', 'finite', 'positive'}, mfilename, 'lowpassCutoff');
+    validateattributes(order, {'numeric'}, ...
+        {'scalar', 'integer', 'positive'}, mfilename, 'order');
+    validateattributes(showPlots, {'numeric', 'logical'}, ...
+        {'scalar'}, mfilename, 'showPlots');
 
-  [rows cols] = size(data_raw);
+    if lowpassCutoff >= sampleRate / 2
+        error('filterdata:InvalidLowpass', ...
+            'lowpassCutoff must be below the Nyquist frequency.');
+    end
+    if highpassCutoff >= lowpassCutoff
+        error('filterdata:InvalidBand', ...
+            'highpassCutoff must be smaller than lowpassCutoff.');
+    end
+    if exist('butter', 'file') ~= 2 || exist('filtfilt', 'file') ~= 2
+        error('filterdata:MissingToolbox', ...
+            'BUTTER and FILTFILT from Signal Processing Toolbox are required.');
+    end
 
-  fc1 = hpcutoff;
-  fc2 = lpcutoff;
-  
-  if hpcutoff == 0 
-      Wn = [2*fc2/sf];
-  else
-      Wn = [2*fc1/sf, 2*fc2/sf];
-  end;
-      
-  [butter_b,butter_a] = butter(order,Wn);
-  
-  for p = 1:cols
-       startdata=1;
-       enddata=rows;
-       while data_raw(startdata,p)==0 && startdata < rows;startdata=startdata+1;end;
-       while data_raw(enddata,p)==0 && enddata >1;enddata=enddata-1;end;
-      
-       if enddata-startdata>5
-         dr=data_raw(startdata:enddata,p);
-         data_filt(startdata:enddata,p) = filtfilt(butter_b,butter_a,dr);
-        	if length(data_filt(:,p))<rows; data_filt(enddata+1:rows,p)=0;end %changed
-       else
-          data_filt(:,p)=0;
-       end
-  end; 
-  
-  %graph raw and filtered data if show = 1
-  if show 
-      [npoints nchan] = size(data_raw);
-      t = 1/sf:1/sf:npoints/sf;
-      figure;
-      for ch = 1:nchan
-          hold off;
-          plot(t,data_raw(:,ch),'.');
-          axis auto;          
-          hold on;          
-          plot(t,data_filt(:,ch),'r');
-          title([num2str(ch) ' of ' num2str(nchan)]);
-          drawnow;
-          axis manual; % freezes the axis, so that as you go through the animation the axis doesn't change
-          pause;
-      end;
-  end;
+    correction = (sqrt(2) - 1)^(0.5 / order);
+    correctedLowpass = lowpassCutoff / correction;
+    if correctedLowpass >= sampleRate / 2
+        error('filterdata:CorrectedCutoff', ...
+            'The corrected low-pass cutoff must remain below Nyquist.');
+    end
+    if highpassCutoff == 0
+        normalizedCutoff = 2 * correctedLowpass / sampleRate;
+    else
+        correctedHighpass = highpassCutoff / correction;
+        normalizedCutoff = 2 * [correctedHighpass, correctedLowpass] / sampleRate;
+    end
+    [butterB, butterA] = butter(order, normalizedCutoff);
+
+    dataFiltered = zeros(size(dataRaw), 'like', dataRaw);
+    minimumLength = 3 * (max(numel(butterA), numel(butterB)) - 1);
+    for column = 1:size(dataRaw, 2)
+        firstSample = find(dataRaw(:, column) ~= 0, 1, 'first');
+        lastSample = find(dataRaw(:, column) ~= 0, 1, 'last');
+        if isempty(firstSample) || lastSample - firstSample + 1 <= minimumLength
+            continue;
+        end
+        segment = dataRaw(firstSample:lastSample, column);
+        dataFiltered(firstSample:lastSample, column) = filtfilt(butterB, butterA, segment);
+    end
+
+    if showPlots
+        time = (0:size(dataRaw, 1)-1) / sampleRate;
+        for column = 1:size(dataRaw, 2)
+            figure;
+            plot(time, dataRaw(:, column), '.', time, dataFiltered(:, column), 'r');
+            title(sprintf('Channel %d of %d', column, size(dataRaw, 2)));
+            xlabel('Time (s)');
+            legend('Raw', 'Filtered');
+            grid on;
+        end
+    end
 end
-
-

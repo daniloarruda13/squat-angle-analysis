@@ -1,93 +1,91 @@
-function StickFigure1(kindata, links, cop, grf, vu, axLimits, speed, axHandle)
-% StickFigure1(kindata, links, cop, grf, vu, axLimits, speed, axHandle)
-% Draws a stick figure animation of marker data.
-%
-% kindata:   [nFrames x (3*nMarkers)] matrix of XYZ data
-% links:     [nLinks x 2] marker index pairs
-% cop, grf:  (optional) Center-of-pressure and ground reaction vectors
-% vu:        [az el] view vector, e.g. [3 10 2]
-% axLimits:  [xmin xmax ymin ymax zmin zmax]
-% speed:     interpolation factor (>1 = slower)
-% axHandle:  (optional) target axes (if omitted, creates figure(1))
+function StickFigure1(kindata, links, cop, grf, viewDirection, axisLimits, frameStep, axesHandle)
+%STICKFIGURE1 Animate XYZ marker data and optional force vectors.
+%   KINDATA is N-by-(3*M), LINKS contains one-based marker index pairs, and
+%   FRAMESTEP controls frame decimation (12 renders every twelfth frame).
 
-    if nargin < 8 || isempty(axHandle)
-        fig = figure(1); clf(fig);
-        axHandle = axes('Parent', fig);
+    validateattributes(kindata, {'numeric'}, {'2d', 'real'}, mfilename, 'kindata');
+    if isempty(kindata) || mod(size(kindata, 2), 3) ~= 0
+        error('StickFigure1:InvalidMarkerData', ...
+            'kindata must be nonempty with three columns per marker.');
+    end
+    markerCount = size(kindata, 2) / 3;
+    validateattributes(links, {'numeric'}, ...
+        {'2d', 'ncols', 2, 'integer', 'positive', '<=', markerCount}, ...
+        mfilename, 'links');
+    validateattributes(axisLimits, {'numeric'}, ...
+        {'vector', 'numel', 6, 'real', 'finite'}, mfilename, 'axisLimits');
+    validateattributes(frameStep, {'numeric'}, ...
+        {'scalar', 'integer', 'positive'}, mfilename, 'frameStep');
+
+    if nargin < 8 || isempty(axesHandle)
+        figureHandle = figure;
+        axesHandle = axes('Parent', figureHandle);
+    elseif ~isgraphics(axesHandle, 'axes')
+        error('StickFigure1:InvalidAxes', 'axesHandle must be a valid axes object.');
     end
 
-    % Resample data if speed ~= 1
-    if speed ~= 1
-        oldtime = 1:size(kindata,1);
-        newtime = 1:(1*speed):size(kindata,1);
-        kindata = interp1(oldtime, kindata, newtime);
+    hasForces = ~isempty(cop) || ~isempty(grf);
+    if hasForces
+        if isempty(cop) || isempty(grf)
+            error('StickFigure1:IncompleteForces', ...
+                'cop and grf must either both be supplied or both be empty.');
+        end
+        validateattributes(cop, {'numeric'}, ...
+            {'2d', 'nrows', size(kindata, 1), 'ncols', 6, 'real', 'finite'}, ...
+            mfilename, 'cop');
+        validateattributes(grf, {'numeric'}, ...
+            {'size', size(cop), 'real', 'finite'}, mfilename, 'grf');
     end
 
-    scale = 0.0001;
-    nFrames = size(kindata,1);
-    nMarkers = size(kindata,2)/3;
-    data = reshape(kindata, nFrames, 3, nMarkers);
+    frames = 1:frameStep:size(kindata, 1);
+    markerData = reshape(kindata, size(kindata, 1), 3, markerCount);
+    forceScale = 0.0001;
 
-    % Prepare axis
-    axes(axHandle);
-    hold(axHandle, 'on');
-    axis(axHandle, axLimits);
-    if ~isempty(vu)
-        view(axHandle, vu);
+    axis(axesHandle, axisLimits);
+    if ~isempty(viewDirection)
+        view(axesHandle, viewDirection);
     end
-    xlabel(axHandle,'X'); ylabel(axHandle,'Y'); zlabel(axHandle,'Z');
-    grid(axHandle,'on');
+    xlabel(axesHandle, 'X');
+    ylabel(axesHandle, 'Y');
+    zlabel(axesHandle, 'Z');
+    grid(axesHandle, 'on');
 
-    % Animation loop
-    for i = 1:nFrames
-        cla(axHandle);
+    for frame = frames
+        cla(axesHandle);
+        hold(axesHandle, 'on');
+        coordinates = squeeze(markerData(frame, :, :)).';
+        plot3(axesHandle, coordinates(:, 1), coordinates(:, 2), ...
+            coordinates(:, 3), 'ro', 'MarkerSize', 2, 'LineWidth', 1.5);
 
-        % Marker positions
-        x = squeeze(data(i,1,:));
-        y = squeeze(data(i,2,:));
-        z = squeeze(data(i,3,:));
-        plot3(axHandle, x, y, z, 'ro', 'MarkerSize', 2, 'LineWidth', 1.5);
-
-        % GRF vectors (optional)
-        if ~isempty(cop)
-            x1 = [cop(i,1), cop(i,1)+scale*grf(i,1)];
-            y1 = [cop(i,2), cop(i,2)+scale*grf(i,2)];
-            z1 = [cop(i,3), cop(i,3)+scale*grf(i,3)];
-            plot3(axHandle, x1, y1, z1, 'b', 'LineWidth', 2);
-
-            x2 = [cop(i,4), cop(i,4)+scale*grf(i,4)];
-            y2 = [cop(i,5), cop(i,5)+scale*grf(i,5)];
-            z2 = [cop(i,6), cop(i,6)+scale*grf(i,6)];
-            plot3(axHandle, x2, y2, z2, 'r', 'LineWidth', 2);
+        if hasForces
+            drawForce(axesHandle, cop(frame, 1:3), grf(frame, 1:3), ...
+                forceScale, 'b');
+            drawForce(axesHandle, cop(frame, 4:6), grf(frame, 4:6), ...
+                forceScale, 'r');
         end
 
-        % Link segments
-for j = 1:size(links,1)
-    data2 = data(:,:,links(j,:));
-    x = squeeze(data2(i,1,:));
-    y = squeeze(data2(i,2,:));
-    z = squeeze(data2(i,3,:));
+        for link = 1:size(links, 1)
+            endpoints = coordinates(links(link, :), :);
+            if any(~isfinite(endpoints), 'all') || ...
+                    norm(endpoints(2, :) - endpoints(1, :)) == 0
+                continue;
+            end
+            [X, Y, Z] = cylinder2p(12, 5, endpoints(1, :), endpoints(2, :));
+            surf(axesHandle, X, Y, Z, 'EdgeColor', 'none', ...
+                'FaceColor', [0.5, 0.5, 0.5]);
+        end
 
-    if numel(x) < 2 || any(isnan([x;y;z]), 'all')
-        continue; % Skip incomplete links
-    end
-
-    p1 = [x(1) y(1) z(1)];
-    p2 = [x(2) y(2) z(2)];
-
-    % Ensure they’re row vectors
-    p1 = p1(:)'; 
-    p2 = p2(:)';
-
-    try
-        [X,Y,Z] = cylinder2p(12,5,p1,p2);
-        surf(axHandle, X, Y, Z, 'EdgeColor','none','FaceColor',[0.5 0.5 0.5]);
-
-    catch ME
-        warning('Link %d skipped: %s', j, ME.message);
+        axis(axesHandle, axisLimits);
+        if ~isempty(viewDirection)
+            view(axesHandle, viewDirection);
+        end
+        drawnow limitrate;
     end
 end
 
-
-        drawnow limitrate nocallbacks
-    end
+function drawForce(axesHandle, origin, force, scale, color)
+    endpoint = origin + scale * force;
+    plot3(axesHandle, [origin(1), endpoint(1)], ...
+        [origin(2), endpoint(2)], [origin(3), endpoint(3)], ...
+        color, 'LineWidth', 2);
 end
